@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head th:replace="~{layout/base :: head('Track Order')}">
+    <style>
+        #map { height: 340px; border-radius: 12px; background:#e9ecef; }
+        .step-label { font-size: .75rem; margin-top: .4rem; color: #495057; }
+    </style>
+</head>
+<body class="d-flex flex-column min-vh-100">
+
+<nav th:replace="~{layout/base :: navbar}"></nav>
+
+<main class="flex-grow-1 py-4">
+    <div class="container" style="max-width:760px">
+
+        <div class="d-flex align-items-center gap-2 mb-4">
+            <a href="/orders/history" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i></a>
+            <div>
+                <h3 class="fw-bold mb-0">Track Order <span class="text-muted fs-5" id="orderIdLabel"></span></h3>
+                <small class="text-muted" id="restaurantLabel"></small>
+            </div>
+        </div>
+
+        <!-- Status stepper -->
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-body py-4">
+                <div class="d-flex justify-content-between" id="statusStepper">
+                    <div class="status-step" data-status="PLACED">
+                        <div class="step-icon"><i class="bi bi-receipt"></i></div>
+                        <div class="step-label">Placed</div>
+                    </div>
+                    <div class="status-step" data-status="CONFIRMED">
+                        <div class="step-icon"><i class="bi bi-check-circle"></i></div>
+                        <div class="step-label">Confirmed</div>
+                    </div>
+                    <div class="status-step" data-status="PREPARING">
+                        <div class="step-icon"><i class="bi bi-fire"></i></div>
+                        <div class="step-label">Preparing</div>
+                    </div>
+                    <div class="status-step" data-status="OUT_FOR_DELIVERY">
+                        <div class="step-icon"><i class="bi bi-bicycle"></i></div>
+                        <div class="step-label">On the Way</div>
+                    </div>
+                    <div class="status-step" data-status="DELIVERED">
+                        <div class="step-icon"><i class="bi bi-house-check"></i></div>
+                        <div class="step-label">Delivered</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ETA banner -->
+        <div id="etaBanner" class="alert alert-info d-none">
+            <i class="bi bi-clock me-2"></i>
+            <span id="etaText">Estimating delivery time…</span>
+            <span class="badge bg-info text-dark ms-2" id="aiEtaBadge"></span>
+        </div>
+
+        <!-- Map -->
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-body p-2">
+                <div id="map"></div>
+                <div class="text-center text-muted small mt-2" id="mapFallback">
+                    <i class="bi bi-map me-1"></i>Live map requires Google Maps API key
+                </div>
+            </div>
+        </div>
+
+        <!-- Timeline -->
+        <div class="card border-0 shadow-sm">
+            <div class="card-body">
+                <h6 class="fw-bold mb-3"><i class="bi bi-list-check me-2"></i>Order Timeline</h6>
+                <div id="timeline"><p class="text-muted text-center py-3">Loading…</p></div>
+            </div>
+        </div>
+    </div>
+</main>
+
+<footer th:replace="~{layout/base :: footer}"></footer>
+<div th:replace="~{layout/base :: scripts}"></div>
+
+<!-- Google Maps (only if key provided) -->
+<script th:if="${mapsApiKey != null and !mapsApiKey.isEmpty()}"
+        th:src="'https://maps.googleapis.com/maps/api/js?key=' + ${mapsApiKey} + '&callback=initMap'" async defer></script>
+
+<script th:inline="javascript">
+    const ORDER_ID = /*[[${orderId}]]*/ null
+        || window.location.pathname.split('/')[2];
+    const MAPS_KEY = /*[[${mapsApiKey}]]*/ '';
+
+    let map, deliveryMarker, destinationMarker, stompClient;
+    const STATUS_ORDER = ['PLACED','CONFIRMED','PREPARING','OUT_FOR_DELIVERY','DELIVERED'];
+
+    if (!isLoggedIn()) window.location.href = '/login';
+
+    // ── Load order ────────────────────────────────────────────────────
+    async function loadOrder() {
+        const res = await apiFetch(`/api/orders/${ORDER_ID}`);
+        if (!res) return;
+        const order = await res.json();
+        renderOrder(order);
+        loadAiEta();
+    }
+
+    function renderOrder(order) {
+        document.getElementById('orderIdLabel').textContent = '#' + order.id;
+        document.getElementById('restaurantLabel').textContent = order.restaurantName || '';
+        updateStepper(order.status);
+        renderTimeline(order.trackingHistory || []);
+
+        if (order.estimatedDeliveryTime) {
+            const eta = new Date(order.estimatedDeliveryTime);
+            document.getElementById('etaBanner').classList.remove('d-none');
+            document.getElementById('etaText').textContent =
+                `Estimated delivery: ${eta.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`;
+        }
+    }
+
+    function updateStepper(currentStatus) {
+        const steps = document.querySelectorAll('#statusStepper .status-step');
+        const currentIdx = STATUS_ORDER.indexOf(currentStatus);
+        steps.forEach((step, i) => {
+            step.classList.remove('active','done');
+            if (i < currentIdx)  step.classList.add('done');
+            if (i === currentIdx) step.classList.add('active');
+        });
+    }
+
+    function renderTimeline(history) {
+        const el = document.getElementById('timeline');
+        if (!history.length) { el.innerHTML = '<p class="text-muted text-center">No updates yet.</p>'; return; }
+        el.innerHTML = [...history].reverse().map(h => `
+            <div class="d-flex gap-3 mb-3">
+                <div class="text-center" style="min-width:42px">
+                    <div class="rounded-circle d-inline-flex align-items-center justify-content-center"
+                         style="width:36px;height:36px;background:var(--pp-orange);color:#fff">
+                        <i class="bi bi-check2 small"></i>
+                    </div>
+                    <div class="border-start mx-auto" style="height:100%;width:2px;background:#dee2e6"></div>
+                </div>
+                <div class="flex-grow-1 pb-2">
+                    <div class="fw-semibold small">${h.status}</div>
+                    <div class="text-muted small">${h.message || ''}</div>
+                    <div class="text-muted" style="font-size:.7rem">${h.timestamp ? new Date(h.timestamp).toLocaleString() : ''}</div>
+                </div>
+            </div>`).join('');
+    }
+
+    // ── AI ETA ────────────────────────────────────────────────────────
+    async function loadAiEta() {
+        try {
+            const res = await apiFetch(`/api/ai/eta/${ORDER_ID}`);
+            if (!res || !res.ok) return;
+            const data = await res.json();
+            if (data.estimatedMinutes) {
+                document.getElementById('aiEtaBadge').textContent = `AI: ~${data.estimatedMinutes} min`;
+                document.getElementById('etaBanner').classList.remove('d-none');
+            }
+        } catch(e) { /* AI optional */ }
+    }
+
+    // ── WebSocket ─────────────────────────────────────────────────────
+    function connectWebSocket() {
+        const socket = new SockJS('/ws');
+        stompClient = new StompJs.Client({ webSocketFactory: () => socket });
+        stompClient.onConnect = () => {
+            stompClient.subscribe(`/topic/order/${ORDER_ID}/tracking`, (msg) => {
+                const update = JSON.parse(msg.body);
+                updateStepper(update.status);
+                if (update.latitude && update.longitude) updateDeliveryMarker(update.latitude, update.longitude);
+                loadOrder(); // refresh timeline
+            });
+            stompClient.subscribe(`/topic/order/${ORDER_ID}/delay`, (msg) => {
+                const delay = JSON.parse(msg.body);
+                if (delay.isDelayed) {
+                    showDelayAlert(delay.customerMessage || 'Your order is running late.');
+                }
+            });
+        };
+        stompClient.activate();
+    }
+
+    function showDelayAlert(msg) {
+        let el = document.getElementById('delayAlert');
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'delayAlert';
+            el.className = 'alert alert-warning alert-dismissible fade show';
+            el.innerHTML = `<i class="bi bi-exclamation-triangle me-2"></i><span id="delayMsg"></span>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>`;
+            document.querySelector('main .container').prepend(el);
+        }
+        document.getElementById('delayMsg').textContent = msg;
+    }
+
+    // ── Google Maps ───────────────────────────────────────────────────
+    function initMap() {
+        document.getElementById('mapFallback').classList.add('d-none');
+        map = new google.maps.Map(document.getElementById('map'), {
+            center: { lat: 12.9716, lng: 77.5946 },
+            zoom: 13
+        });
+        destinationMarker = new google.maps.Marker({
+            map, icon: { url: 'https://maps.google.com/mapfiles/ms/icons/red-dot.png' },
+            title: 'Delivery Address'
+        });
+    }
+
+    function updateDeliveryMarker(lat, lng) {
+        if (!map) return;
+        const pos = { lat: parseFloat(lat), lng: parseFloat(lng) };
+        if (!deliveryMarker) {
+            deliveryMarker = new google.maps.Marker({
+                position: pos, map,
+                icon: { url: 'https://maps.google.com/mapfiles/ms/icons/blue-dot.png' },
+                title: 'Delivery Partner'
+            });
+        } else {
+            deliveryMarker.setPosition(pos);
+        }
+        map.panTo(pos);
+    }
+
+    // ── Init ──────────────────────────────────────────────────────────
+    loadOrder();
+    connectWebSocket();
+    // Refresh order every 30s
+    setInterval(loadOrder, 30000);
+</script>
+</body>
+</html>

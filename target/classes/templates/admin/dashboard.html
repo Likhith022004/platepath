@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head th:replace="~{layout/base :: head('Admin Dashboard')}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+</head>
+<body class="d-flex flex-column min-vh-100">
+
+<nav th:replace="~{layout/base :: navbar}"></nav>
+
+<main class="flex-grow-1 py-4">
+    <div class="container-fluid px-4">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h3 class="fw-bold mb-0"><i class="bi bi-speedometer2 me-2" style="color:var(--pp-orange)"></i>Admin Dashboard</h3>
+            <div class="d-flex gap-2">
+                <select class="form-select form-select-sm" id="periodSelect" onchange="loadAnalytics()">
+                    <option value="DAILY">Today</option>
+                    <option value="WEEKLY" selected>This Week</option>
+                    <option value="MONTHLY">This Month</option>
+                </select>
+                <button class="btn btn-primary btn-sm" onclick="refreshAll()">
+                    <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                </button>
+            </div>
+        </div>
+
+        <!-- KPI cards -->
+        <div class="row g-3 mb-4">
+            <div class="col-6 col-lg-3">
+                <div class="card border-0 shadow-sm text-center py-3">
+                    <div class="fs-2 fw-bold text-primary" id="kpiOrders">—</div>
+                    <div class="text-muted small">Total Orders</div>
+                </div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="card border-0 shadow-sm text-center py-3">
+                    <div class="fs-2 fw-bold text-success" id="kpiRevenue">—</div>
+                    <div class="text-muted small">Revenue</div>
+                </div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="card border-0 shadow-sm text-center py-3">
+                    <div class="fs-2 fw-bold" style="color:var(--pp-orange)" id="kpiAvgOrder">—</div>
+                    <div class="text-muted small">Avg Order Value</div>
+                </div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="card border-0 shadow-sm text-center py-3">
+                    <div class="fs-2 fw-bold text-info" id="kpiPeak">—</div>
+                    <div class="text-muted small">Peak Hour</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-4">
+            <!-- Orders by status chart -->
+            <div class="col-lg-5">
+                <div class="card border-0 shadow-sm h-100">
+                    <div class="card-body">
+                        <h6 class="fw-bold mb-3">Orders by Status</h6>
+                        <canvas id="statusChart" height="220"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- AI Insights -->
+            <div class="col-lg-7">
+                <div class="card border-0 shadow-sm h-100">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between mb-3">
+                            <h6 class="fw-bold mb-0"><i class="bi bi-robot me-2" style="color:var(--pp-orange)"></i>AI Insights</h6>
+                            <span class="badge bg-secondary" id="aiStatusBadge">Loading…</span>
+                        </div>
+                        <div id="aiSummary" class="text-muted small mb-3"></div>
+                        <ul id="aiInsights" class="list-unstyled mb-3"></ul>
+                        <div class="alert alert-light border mb-2" id="aiRecommendation" style="display:none">
+                            <i class="bi bi-lightbulb-fill me-2 text-warning"></i><span id="aiRecText"></span>
+                        </div>
+                        <div class="d-flex gap-2 flex-wrap" id="topRestaurants"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Orders table -->
+        <div class="card border-0 shadow-sm mt-4">
+            <div class="card-body">
+                <div class="d-flex justify-content-between mb-3">
+                    <h6 class="fw-bold mb-0">Recent Orders</h6>
+                    <select class="form-select form-select-sm w-auto" id="statusFilter" onchange="loadOrders()">
+                        <option value="">All Statuses</option>
+                        <option>PLACED</option><option>CONFIRMED</option><option>PREPARING</option>
+                        <option>OUT_FOR_DELIVERY</option><option>DELIVERED</option><option>CANCELLED</option>
+                    </select>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle small">
+                        <thead class="table-light">
+                        <tr><th>#</th><th>Customer</th><th>Restaurant</th><th>Amount</th><th>Status</th><th>Placed</th><th>Actions</th></tr>
+                        </thead>
+                        <tbody id="ordersTableBody">
+                        <tr><td colspan="7" class="text-center py-3"><div class="spinner-border spinner-border-sm"></div></td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <nav><ul class="pagination pagination-sm justify-content-center mb-0" id="orderPages"></ul></nav>
+            </div>
+        </div>
+    </div>
+</main>
+
+<footer th:replace="~{layout/base :: footer}"></footer>
+<div th:replace="~{layout/base :: scripts}"></div>
+<script>
+    if (!isLoggedIn() || getUser()?.role !== 'ADMIN') window.location.href = '/login';
+
+    let statusChart;
+    const STATUS_COLORS = {
+        PLACED:'#6c757d', CONFIRMED:'#0d6efd', PREPARING:'#ffc107',
+        OUT_FOR_DELIVERY:'#0dcaf0', DELIVERED:'#198754', CANCELLED:'#dc3545'
+    };
+
+    // ── Analytics ─────────────────────────────────────────────────────
+    async function loadAnalytics() {
+        const period = document.getElementById('periodSelect').value;
+        document.getElementById('aiStatusBadge').textContent = 'Loading…';
+        try {
+            const res = await apiFetch(`/api/ai/analytics?period=${period}`);
+            if (!res || !res.ok) { document.getElementById('aiStatusBadge').textContent = 'AI unavailable'; return; }
+            const data = await res.json();
+            renderKpis(data);
+            renderChart(data.ordersByStatus || {});
+            renderInsights(data);
+            document.getElementById('aiStatusBadge').className = 'badge bg-success';
+            document.getElementById('aiStatusBadge').textContent = 'AI active';
+        } catch(e) {
+            document.getElementById('aiStatusBadge').textContent = 'Error';
+        }
+    }
+
+    function renderKpis(data) {
+        document.getElementById('kpiOrders').textContent   = data.totalOrders ?? '—';
+        document.getElementById('kpiRevenue').textContent  = data.totalRevenue ? '₹' + Number(data.totalRevenue).toLocaleString('en-IN') : '—';
+        document.getElementById('kpiAvgOrder').textContent = data.avgOrderValue ? '₹' + Number(data.avgOrderValue).toFixed(0) : '—';
+        document.getElementById('kpiPeak').textContent     = data.peakHour || '—';
+    }
+
+    function renderChart(byStatus) {
+        const labels = Object.keys(byStatus);
+        const values = Object.values(byStatus);
+        const colors = labels.map(l => STATUS_COLORS[l] || '#999');
+        const ctx = document.getElementById('statusChart').getContext('2d');
+        if (statusChart) statusChart.destroy();
+        statusChart = new Chart(ctx, {
+            type: 'doughnut',
+            data: { labels, datasets: [{ data: values, backgroundColor: colors, borderWidth: 2 }] },
+            options: { plugins: { legend: { position: 'bottom' } }, cutout: '60%' }
+        });
+    }
+
+    function renderInsights(data) {
+        document.getElementById('aiSummary').textContent = data.summary || '';
+        const ul = document.getElementById('aiInsights');
+        ul.innerHTML = (data.keyInsights||[]).map(i => `<li class="mb-1 small"><i class="bi bi-check-circle-fill text-success me-2"></i>${i}</li>`).join('');
+        if (data.recommendation) {
+            document.getElementById('aiRecommendation').style.display = 'block';
+            document.getElementById('aiRecText').textContent = data.recommendation;
+        }
+        const topRest = document.getElementById('topRestaurants');
+        topRest.innerHTML = (data.topRestaurants||[]).map(r =>
+            `<span class="badge bg-light text-dark border"><i class="bi bi-shop me-1"></i>${r.name} (${r.orders} orders)</span>`
+        ).join('');
+    }
+
+    // ── Orders table ──────────────────────────────────────────────────
+    let ordersPage = 0;
+    async function loadOrders(page = 0) {
+        ordersPage = page;
+        const status = document.getElementById('statusFilter').value;
+        const url = status ? `/api/orders?status=${status}&page=${page}&size=10` : `/api/orders?page=${page}&size=10`;
+        const res = await apiFetch(url);
+        if (!res) return;
+        const data = await res.json();
+        const orders = data.content || [];
+        const totalPages = data.totalPages || 1;
+
+        const tbody = document.getElementById('ordersTableBody');
+        if (!orders.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No orders</td></tr>'; return; }
+        tbody.innerHTML = orders.map(o => `
+            <tr>
+                <td>#${o.id}</td>
+                <td>${o.customerName||''}</td>
+                <td>${o.restaurantName||''}</td>
+                <td>₹${o.totalAmount}</td>
+                <td><span class="badge" style="background:${STATUS_COLORS[o.status]||'#999'}">${o.status}</span></td>
+                <td>${o.placedAt ? new Date(o.placedAt).toLocaleDateString() : ''}</td>
+                <td>
+                    <a href="/orders/${o.id}/track" class="btn btn-sm btn-outline-secondary" title="View">
+                        <i class="bi bi-eye"></i>
+                    </a>
+                    ${o.status === 'PLACED'
+                        ? `<button class="btn btn-sm btn-outline-success ms-1" onclick="confirmOrder(${o.id})" title="Confirm"><i class="bi bi-check2"></i></button>`
+                        : ''}
+                </td>
+            </tr>`).join('');
+
+        if (totalPages > 1) {
+            const pages = document.getElementById('orderPages');
+            pages.innerHTML = Array.from({length:totalPages},(_,i) =>
+                `<li class="page-item ${i===page?'active':''}"><a class="page-link" href="#" onclick="loadOrders(${i})">${i+1}</a></li>`
+            ).join('');
+        }
+    }
+
+    async function confirmOrder(id) {
+        await apiFetch(`/api/orders/${id}/confirm`, { method: 'POST' });
+        loadOrders(ordersPage);
+    }
+
+    function refreshAll() { loadAnalytics(); loadOrders(0); }
+
+    loadAnalytics();
+    loadOrders();
+</script>
+</body>
+</html>

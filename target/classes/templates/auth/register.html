@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head th:replace="~{layout/base :: head('Register')}"></head>
+<body class="d-flex flex-column min-vh-100">
+
+<nav th:replace="~{layout/base :: navbar}"></nav>
+
+<main class="flex-grow-1 d-flex align-items-center justify-content-center py-5">
+    <div class="card shadow-sm" style="width:100%;max-width:480px;">
+        <div class="card-body p-4">
+            <div class="text-center mb-4">
+                <i class="bi bi-person-plus-fill fs-1" style="color:var(--pp-orange)"></i>
+                <h3 class="fw-bold mt-1">Create Account</h3>
+                <p class="text-muted small">Join PlatePath today</p>
+            </div>
+            <div id="alertBox" class="alert d-none" role="alert"></div>
+            <form id="registerForm" novalidate>
+                <div class="row g-3">
+                    <div class="col-12">
+                        <label class="form-label fw-semibold">Full Name</label>
+                        <input type="text" class="form-control" id="name" placeholder="John Doe" required/>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label fw-semibold">Email Address</label>
+                        <input type="email" class="form-control" id="email" placeholder="john@example.com" required/>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label fw-semibold">Password</label>
+                        <input type="password" class="form-control" id="password" placeholder="Min 6 characters" required minlength="6"/>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label fw-semibold">Phone Number</label>
+                        <input type="tel" class="form-control" id="phone" placeholder="+91 9XXXXXXXXX"/>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label fw-semibold">Delivery Address</label>
+                        <input type="text" class="form-control" id="address" placeholder="Your default delivery address"/>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label fw-semibold">Register As</label>
+                        <select class="form-select" id="role">
+                            <option value="CUSTOMER">Customer — order food</option>
+                            <option value="DELIVERY_BOY">Delivery Partner — earn while delivering</option>
+                            <option value="RESTAURANT_OWNER">Restaurant Owner — list your restaurant</option>
+                        </select>
+                    </div>
+                    <div class="col-12">
+                        <button type="submit" class="btn btn-primary w-100 fw-semibold" id="regBtn">
+                            <span class="spinner-border spinner-border-sm d-none me-2" id="spinner"></span>
+                            Create Account
+                        </button>
+                    </div>
+                </div>
+            </form>
+            <hr/>
+            <p class="text-center text-muted small mb-0">
+                Already have an account? <a href="/login" class="text-decoration-none fw-semibold">Sign In</a>
+            </p>
+        </div>
+    </div>
+</main>
+
+<footer th:replace="~{layout/base :: footer}"></footer>
+<div th:replace="~{layout/base :: scripts}"></div>
+<script>
+    if (localStorage.getItem('pp_token')) window.location.href = '/restaurants';
+
+    function showAlert(msg, type='danger') {
+        const a = document.getElementById('alertBox');
+        a.className = `alert alert-${type}`;
+        a.textContent = msg;
+        a.classList.remove('d-none');
+    }
+
+    document.getElementById('registerForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const btn = document.getElementById('regBtn');
+        const spin = document.getElementById('spinner');
+        btn.disabled = true; spin.classList.remove('d-none');
+        try {
+            const res = await fetch('/api/auth/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name:     document.getElementById('name').value.trim(),
+                    email:    document.getElementById('email').value.trim(),
+                    password: document.getElementById('password').value,
+                    phone:    document.getElementById('phone').value.trim(),
+                    address:  document.getElementById('address').value.trim(),
+                    role:     document.getElementById('role').value
+                })
+            });
+            const data = await res.json();
+            if (!res.ok) { showAlert(data.message || 'Registration failed'); return; }
+            localStorage.setItem('pp_token', data.token);
+            localStorage.setItem('pp_user', JSON.stringify({ name: data.name, email: data.email, role: data.role, id: data.userId }));
+            showAlert('Account created! Redirecting…', 'success');
+            setTimeout(() => window.location.href = '/restaurants', 1200);
+        } catch (err) {
+            showAlert('Network error. Please try again.');
+        } finally {
+            btn.disabled = false; spin.classList.add('d-none');
+        }
+    });
+</script>
+</body>
+</html>

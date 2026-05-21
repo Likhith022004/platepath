@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head th:replace="~{layout/base :: head('Browse Restaurants')}"></head>
+<body class="d-flex flex-column min-vh-100">
+
+<nav th:replace="~{layout/base :: navbar}"></nav>
+
+<!-- Cart sidebar -->
+<div class="cart-overlay" onclick="toggleCart()"></div>
+<aside class="cart-sidebar p-3">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="fw-bold mb-0"><i class="bi bi-cart3 me-2"></i>Your Cart</h5>
+        <button class="btn-close" onclick="toggleCart()"></button>
+    </div>
+    <div id="cartItems"><p class="text-muted text-center py-4">Your cart is empty</p></div>
+    <div id="cartFooter" class="d-none border-top pt-3">
+        <div class="d-flex justify-content-between fw-semibold mb-3">
+            <span>Total</span><span id="cartTotal">₹0</span>
+        </div>
+        <a href="/checkout" class="btn btn-primary w-100">Proceed to Checkout</a>
+    </div>
+</aside>
+
+<main class="flex-grow-1 py-4">
+    <div class="container">
+        <!-- Hero -->
+        <div class="text-center mb-4">
+            <h1 class="fw-bold">Hungry? <span style="color:var(--pp-orange)">We deliver.</span></h1>
+            <p class="text-muted">Discover restaurants near you</p>
+        </div>
+
+        <!-- Search & filters -->
+        <div class="row g-2 mb-4">
+            <div class="col-md-6">
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input type="text" class="form-control" id="searchInput" placeholder="Search restaurants or cuisines…" oninput="filterRestaurants()"/>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <select class="form-select" id="cuisineFilter" onchange="filterRestaurants()">
+                    <option value="">All Cuisines</option>
+                    <option>INDIAN</option><option>CHINESE</option><option>ITALIAN</option>
+                    <option>FAST_FOOD</option><option>MEXICAN</option><option>JAPANESE</option>
+                    <option>AMERICAN</option><option>MEDITERRANEAN</option><option>THAI</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <select class="form-select" id="sortFilter" onchange="filterRestaurants()">
+                    <option value="rating">Sort: Top Rated</option>
+                    <option value="name">Sort: A–Z</option>
+                    <option value="prepTime">Sort: Fastest</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Restaurant grid -->
+        <div id="loadingState" class="text-center py-5">
+            <div class="spinner-border text-secondary"></div>
+            <p class="mt-2 text-muted">Loading restaurants…</p>
+        </div>
+        <div id="restaurantGrid" class="row g-4 d-none"></div>
+        <div id="emptyState" class="text-center py-5 d-none">
+            <i class="bi bi-shop-window fs-1 text-muted"></i>
+            <p class="mt-2 text-muted">No restaurants found.</p>
+        </div>
+    </div>
+</main>
+
+<footer th:replace="~{layout/base :: footer}"></footer>
+<div th:replace="~{layout/base :: scripts}"></div>
+<script>
+    let allRestaurants = [];
+
+    async function loadRestaurants() {
+        try {
+            const res = await fetch('/api/restaurants?page=0&size=50');
+            const data = await res.json();
+            allRestaurants = data.content || data || [];
+            renderRestaurants(allRestaurants);
+        } catch (e) {
+            document.getElementById('loadingState').innerHTML = '<p class="text-danger">Failed to load restaurants.</p>';
+        }
+    }
+
+    function renderRestaurants(list) {
+        const grid = document.getElementById('restaurantGrid');
+        const empty = document.getElementById('emptyState');
+        document.getElementById('loadingState').classList.add('d-none');
+        if (!list.length) { grid.classList.add('d-none'); empty.classList.remove('d-none'); return; }
+        empty.classList.add('d-none');
+        grid.classList.remove('d-none');
+        grid.innerHTML = list.map(r => `
+            <div class="col-sm-6 col-lg-4">
+                <div class="card card-restaurant h-100 border-0 shadow-sm" onclick="window.location='/restaurants/${r.id}/menu'">
+                    <img src="${r.imageUrl || 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=400'}"
+                         class="card-img-top" style="height:180px;object-fit:cover" alt="${r.name}"/>
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <h5 class="card-title fw-bold mb-1">${r.name}</h5>
+                            <span class="badge bg-success"><i class="bi bi-star-fill me-1"></i>${(r.rating||4).toFixed(1)}</span>
+                        </div>
+                        <p class="text-muted small mb-2">${r.cuisineType || ''} • ${r.address || ''}</p>
+                        <div class="d-flex gap-3 small text-muted">
+                            <span><i class="bi bi-clock me-1"></i>${r.avgPrepTimeMinutes||30} min</span>
+                            <span><i class="bi bi-geo-alt me-1"></i>${r.deliveryRadiusKm||10} km radius</span>
+                        </div>
+                    </div>
+                    <div class="card-footer bg-transparent border-0 d-flex justify-content-between align-items-center">
+                        <span class="badge ${r.open || r.isOpen ? 'bg-success' : 'bg-secondary'}">${r.open || r.isOpen ? 'Open' : 'Closed'}</span>
+                        <a href="/restaurants/${r.id}/menu" class="btn btn-primary btn-sm">Order Now</a>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    function filterRestaurants() {
+        const q    = document.getElementById('searchInput').value.toLowerCase();
+        const cui  = document.getElementById('cuisineFilter').value;
+        const sort = document.getElementById('sortFilter').value;
+        let filtered = allRestaurants.filter(r => {
+            const matchQ = !q || r.name.toLowerCase().includes(q) || (r.cuisineType||'').toLowerCase().includes(q);
+            const matchC = !cui || r.cuisineType === cui;
+            return matchQ && matchC;
+        });
+        if (sort === 'rating')   filtered.sort((a,b) => (b.rating||0) - (a.rating||0));
+        if (sort === 'name')     filtered.sort((a,b) => a.name.localeCompare(b.name));
+        if (sort === 'prepTime') filtered.sort((a,b) => (a.avgPrepTimeMinutes||30) - (b.avgPrepTimeMinutes||30));
+        renderRestaurants(filtered);
+    }
+
+    // Cart rendering
+    function renderCart() {
+        const cart = getCart();
+        const itemsEl = document.getElementById('cartItems');
+        const footerEl = document.getElementById('cartFooter');
+        if (!cart.length) {
+            itemsEl.innerHTML = '<p class="text-muted text-center py-4">Your cart is empty</p>';
+            footerEl.classList.add('d-none');
+            return;
+        }
+        const total = cart.reduce((s,i) => s + i.price * i.qty, 0);
+        itemsEl.innerHTML = cart.map(i => `
+            <div class="d-flex align-items-center gap-2 mb-2">
+                <div class="flex-grow-1">
+                    <div class="fw-semibold small">${i.name}</div>
+                    <div class="text-muted small">₹${i.price} × ${i.qty}</div>
+                </div>
+                <div class="d-flex align-items-center gap-1">
+                    <button class="btn btn-sm btn-outline-secondary" style="width:26px;height:26px;padding:0" onclick="changeQty(${i.id},-1)">−</button>
+                    <span class="small fw-bold">${i.qty}</span>
+                    <button class="btn btn-sm btn-outline-secondary" style="width:26px;height:26px;padding:0" onclick="changeQty(${i.id},1)">+</button>
+                </div>
+            </div>
+        `).join('');
+        document.getElementById('cartTotal').textContent = '₹' + total.toFixed(2);
+        footerEl.classList.remove('d-none');
+    }
+
+    function changeQty(itemId, delta) {
+        let cart = getCart();
+        const idx = cart.findIndex(i => i.id === itemId);
+        if (idx === -1) return;
+        cart[idx].qty += delta;
+        if (cart[idx].qty <= 0) cart.splice(idx, 1);
+        saveCart(cart);
+        renderCart();
+    }
+
+    document.querySelector('.cart-sidebar').addEventListener('show.bs.offcanvas', renderCart);
+    const origToggle = window.toggleCart;
+    window.toggleCart = function() { origToggle(); renderCart(); };
+
+    loadRestaurants();
+</script>
+</body>
+</html>

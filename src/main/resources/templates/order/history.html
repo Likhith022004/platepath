@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head th:replace="~{layout/base :: head('My Orders')}"></head>
+<body class="d-flex flex-column min-vh-100">
+
+<nav th:replace="~{layout/base :: navbar}"></nav>
+
+<main class="flex-grow-1 py-4">
+    <div class="container">
+        <h2 class="fw-bold mb-4"><i class="bi bi-bag me-2" style="color:var(--pp-orange)"></i>My Orders</h2>
+
+        <div id="loadingState" class="text-center py-5">
+            <div class="spinner-border text-secondary"></div>
+        </div>
+        <div id="emptyState" class="text-center py-5 d-none">
+            <i class="bi bi-bag-x fs-1 text-muted"></i>
+            <p class="mt-2 text-muted">No orders yet. <a href="/restaurants">Order some food!</a></p>
+        </div>
+        <div id="orderList"></div>
+
+        <!-- Pagination -->
+        <nav id="pagination" class="d-none mt-4">
+            <ul class="pagination justify-content-center" id="pageLinks"></ul>
+        </nav>
+    </div>
+</main>
+
+<footer th:replace="~{layout/base :: footer}"></footer>
+<div th:replace="~{layout/base :: scripts}"></div>
+<script>
+    if (!isLoggedIn()) window.location.href = '/login?next=orders/history';
+
+    const user = getUser();
+    let currentPage = 0;
+    const PAGE_SIZE = 10;
+
+    const STATUS_BADGE = {
+        PLACED:           'bg-secondary',
+        CONFIRMED:        'bg-primary',
+        PREPARING:        'bg-warning text-dark',
+        OUT_FOR_DELIVERY: 'bg-info text-dark',
+        DELIVERED:        'bg-success',
+        CANCELLED:        'bg-danger'
+    };
+
+    async function loadOrders(page = 0) {
+        currentPage = page;
+        const res = await apiFetch(`/api/orders/my?page=${page}&size=${PAGE_SIZE}`);
+        if (!res) return;
+        const data = await res.json();
+        const orders = data.content || [];
+        const totalPages = data.totalPages || 1;
+
+        document.getElementById('loadingState').classList.add('d-none');
+
+        if (!orders.length && page === 0) {
+            document.getElementById('emptyState').classList.remove('d-none');
+            return;
+        }
+
+        document.getElementById('orderList').innerHTML = orders.map(o => `
+            <div class="card border-0 shadow-sm mb-3">
+                <div class="card-body">
+                    <div class="row align-items-center">
+                        <div class="col-md-5">
+                            <div class="fw-bold">${o.restaurantName || 'Restaurant'}</div>
+                            <div class="text-muted small">${(o.items||[]).map(i => `${i.menuItemName} ×${i.quantity}`).join(', ')}</div>
+                            <div class="text-muted small mt-1"><i class="bi bi-calendar3 me-1"></i>${o.placedAt ? new Date(o.placedAt).toLocaleDateString() : ''}</div>
+                        </div>
+                        <div class="col-md-3 text-md-center mt-2 mt-md-0">
+                            <span class="badge ${STATUS_BADGE[o.status] || 'bg-secondary'}">${o.status}</span>
+                        </div>
+                        <div class="col-md-2 text-md-center fw-bold mt-2 mt-md-0">
+                            ₹${o.totalAmount}
+                        </div>
+                        <div class="col-md-2 text-md-end mt-2 mt-md-0 d-flex gap-2 justify-content-md-end">
+                            ${o.status !== 'DELIVERED' && o.status !== 'CANCELLED'
+                                ? `<a href="/orders/${o.id}/track" class="btn btn-sm btn-primary"><i class="bi bi-geo-alt me-1"></i>Track</a>`
+                                : `<a href="/orders/${o.id}/track" class="btn btn-sm btn-outline-secondary"><i class="bi bi-eye me-1"></i>View</a>`}
+                            ${o.status === 'PLACED'
+                                ? `<button class="btn btn-sm btn-outline-danger" onclick="cancelOrder(${o.id})"><i class="bi bi-x-circle"></i></button>`
+                                : ''}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+
+        if (totalPages > 1) {
+            const nav = document.getElementById('pagination');
+            const links = document.getElementById('pageLinks');
+            nav.classList.remove('d-none');
+            let html = `<li class="page-item ${page===0?'disabled':''}"><a class="page-link" href="#" onclick="loadOrders(${page-1})">«</a></li>`;
+            for (let i = 0; i < totalPages; i++) {
+                html += `<li class="page-item ${i===page?'active':''}"><a class="page-link" href="#" onclick="loadOrders(${i})">${i+1}</a></li>`;
+            }
+            html += `<li class="page-item ${page>=totalPages-1?'disabled':''}"><a class="page-link" href="#" onclick="loadOrders(${page+1})">»</a></li>`;
+            links.innerHTML = html;
+        }
+    }
+
+    async function cancelOrder(id) {
+        if (!confirm('Cancel this order?')) return;
+        const res = await apiFetch(`/api/orders/${id}/cancel`, { method: 'POST' });
+        if (res?.ok) loadOrders(currentPage);
+    }
+
+    loadOrders();
+</script>
+</body>
+</html>

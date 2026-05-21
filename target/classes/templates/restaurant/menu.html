@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head th:replace="~{layout/base :: head('Menu')}"></head>
+<body class="d-flex flex-column min-vh-100">
+
+<nav th:replace="~{layout/base :: navbar}"></nav>
+
+<!-- Cart sidebar -->
+<div class="cart-overlay" onclick="toggleCart()"></div>
+<aside class="cart-sidebar p-3">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="fw-bold mb-0"><i class="bi bi-cart3 me-2"></i>Your Cart</h5>
+        <button class="btn-close" onclick="toggleCart()"></button>
+    </div>
+    <div id="cartRestaurant" class="text-muted small mb-2"></div>
+    <div id="cartItems"><p class="text-muted text-center py-4">Your cart is empty</p></div>
+    <div id="cartFooter" class="d-none border-top pt-3">
+        <div class="d-flex justify-content-between fw-semibold mb-3">
+            <span>Total</span><span id="cartTotal">₹0</span>
+        </div>
+        <a href="/checkout" class="btn btn-primary w-100 fw-semibold">Proceed to Checkout</a>
+    </div>
+</aside>
+
+<main class="flex-grow-1 py-4">
+    <div class="container">
+        <!-- Restaurant header -->
+        <div id="restaurantHeader" class="mb-4">
+            <div class="d-flex align-items-center gap-2 mb-1">
+                <a href="/restaurants" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i></a>
+                <h2 class="fw-bold mb-0" id="restName">Loading…</h2>
+            </div>
+            <p class="text-muted" id="restMeta"></p>
+        </div>
+
+        <!-- Category tabs -->
+        <ul class="nav nav-pills mb-4 flex-wrap" id="categoryTabs"></ul>
+
+        <!-- Menu items -->
+        <div id="loadingState" class="text-center py-5">
+            <div class="spinner-border text-secondary"></div>
+        </div>
+        <div id="menuSections"></div>
+    </div>
+</main>
+
+<footer th:replace="~{layout/base :: footer}"></footer>
+<div th:replace="~{layout/base :: scripts}"></div>
+<script th:inline="javascript">
+    const restaurantId = /*[[${restaurantId}]]*/ null
+        || window.location.pathname.split('/')[2];
+
+    async function loadMenu() {
+        try {
+            const [restRes, menuRes] = await Promise.all([
+                fetch(`/api/restaurants/${restaurantId}`),
+                fetch(`/api/restaurants/${restaurantId}/menu`)
+            ]);
+            const rest = await restRes.json();
+            const items = await menuRes.json();
+            renderHeader(rest);
+            renderMenu(items);
+        } catch (e) {
+            document.getElementById('loadingState').innerHTML = '<p class="text-danger">Failed to load menu.</p>';
+        }
+    }
+
+    function renderHeader(r) {
+        document.getElementById('restName').textContent = r.name;
+        document.getElementById('restMeta').textContent =
+            `${r.cuisineType} • ${r.address} • ⭐ ${(r.rating||4).toFixed(1)} • ~${r.avgPrepTimeMinutes||30} min prep`;
+    }
+
+    function renderMenu(items) {
+        document.getElementById('loadingState').classList.add('d-none');
+        const grouped = {};
+        items.forEach(i => { (grouped[i.category] = grouped[i.category] || []).push(i); });
+
+        const tabs = document.getElementById('categoryTabs');
+        const sections = document.getElementById('menuSections');
+        let first = true;
+
+        Object.entries(grouped).forEach(([cat, catItems]) => {
+            tabs.innerHTML += `<li class="nav-item"><a class="nav-link ${first?'active':''}" href="#cat-${cat}">${cat}</a></li>`;
+            sections.innerHTML += `
+                <section id="cat-${cat}" class="mb-5">
+                    <h5 class="fw-bold border-bottom pb-2 mb-3">${cat}</h5>
+                    <div class="row g-3">
+                        ${catItems.map(item => `
+                        <div class="col-md-6">
+                            <div class="card h-100 border-0 shadow-sm">
+                                <div class="row g-0 h-100">
+                                    <div class="col-8 p-3 d-flex flex-column">
+                                        <div class="d-flex align-items-center gap-1 mb-1">
+                                            <span class="badge ${item.vegetarian||item.isVegetarian ? 'bg-success' : 'bg-danger'}" style="font-size:.6rem">
+                                                ${item.vegetarian||item.isVegetarian ? '🟢 VEG' : '🔴 NON-VEG'}
+                                            </span>
+                                        </div>
+                                        <h6 class="fw-bold mb-1">${item.name}</h6>
+                                        <p class="text-muted small flex-grow-1">${item.description||''}</p>
+                                        <div class="d-flex align-items-center justify-content-between mt-2">
+                                            <span class="fw-bold fs-5">₹${item.price}</span>
+                                            <button class="btn btn-primary btn-sm" onclick="addToCart(${JSON.stringify(item).replace(/"/g,'&quot;')})">
+                                                <i class="bi bi-plus-lg me-1"></i>Add
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="col-4">
+                                        <img src="${item.imageUrl||'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=200'}"
+                                             class="img-fluid rounded-end h-100" style="object-fit:cover" alt="${item.name}"/>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        `).join('')}
+                    </div>
+                </section>`;
+            first = false;
+        });
+    }
+
+    function addToCart(item) {
+        let cart = getCart();
+        const existing = cart.find(c => c.id === item.id);
+        if (existing) {
+            const currentRestId = cart[0]?.restaurantId;
+            if (currentRestId && currentRestId !== restaurantId) {
+                if (!confirm('Your cart has items from another restaurant. Clear and start fresh?')) return;
+                clearCart(); cart = [];
+            }
+            existing.qty++;
+        } else {
+            const currentRestId = cart[0]?.restaurantId;
+            if (cart.length && currentRestId && currentRestId != restaurantId) {
+                if (!confirm('Your cart has items from another restaurant. Clear and start fresh?')) return;
+                clearCart(); cart = [];
+            }
+            cart.push({ id: item.id, name: item.name, price: parseFloat(item.price), qty: 1, restaurantId: parseInt(restaurantId) });
+        }
+        saveCart(cart);
+        renderCart();
+        // Briefly open cart to confirm
+        document.querySelector('.cart-sidebar').classList.add('open');
+        document.querySelector('.cart-overlay').classList.add('open');
+    }
+
+    function renderCart() {
+        const cart = getCart();
+        const itemsEl = document.getElementById('cartItems');
+        const footerEl = document.getElementById('cartFooter');
+        if (!cart.length) {
+            itemsEl.innerHTML = '<p class="text-muted text-center py-4">Your cart is empty</p>';
+            footerEl.classList.add('d-none'); return;
+        }
+        const total = cart.reduce((s,i) => s + i.price * i.qty, 0);
+        itemsEl.innerHTML = cart.map(i => `
+            <div class="d-flex align-items-center gap-2 mb-2">
+                <div class="flex-grow-1 small">
+                    <div class="fw-semibold">${i.name}</div>
+                    <div class="text-muted">₹${i.price} × ${i.qty} = ₹${(i.price*i.qty).toFixed(2)}</div>
+                </div>
+                <div class="d-flex align-items-center gap-1">
+                    <button class="btn btn-sm btn-outline-secondary" style="width:26px;height:26px;padding:0" onclick="changeQty(${i.id},-1)">−</button>
+                    <span class="small fw-bold">${i.qty}</span>
+                    <button class="btn btn-sm btn-outline-secondary" style="width:26px;height:26px;padding:0" onclick="changeQty(${i.id},1)">+</button>
+                </div>
+            </div>`).join('');
+        document.getElementById('cartTotal').textContent = '₹' + total.toFixed(2);
+        footerEl.classList.remove('d-none');
+    }
+
+    function changeQty(itemId, delta) {
+        let cart = getCart();
+        const idx = cart.findIndex(i => i.id === itemId);
+        if (idx === -1) return;
+        cart[idx].qty += delta;
+        if (cart[idx].qty <= 0) cart.splice(idx, 1);
+        saveCart(cart);
+        renderCart();
+    }
+
+    const origToggle = window.toggleCart;
+    window.toggleCart = function() { origToggle(); renderCart(); };
+
+    loadMenu();
+</script>
+</body>
+</html>

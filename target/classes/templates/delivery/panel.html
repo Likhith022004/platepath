@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head th:replace="~{layout/base :: head('Delivery Panel')}">
+    <style>
+        #map { height: 300px; border-radius: 12px; background: #e9ecef; }
+        .order-card-active { border-left: 4px solid var(--pp-orange); }
+    </style>
+</head>
+<body class="d-flex flex-column min-vh-100">
+
+<nav th:replace="~{layout/base :: navbar}"></nav>
+
+<main class="flex-grow-1 py-4">
+    <div class="container">
+        <div class="row g-4">
+
+            <!-- Left: Active delivery -->
+            <div class="col-lg-5">
+                <h4 class="fw-bold mb-3"><i class="bi bi-bicycle me-2" style="color:var(--pp-orange)"></i>Delivery Panel</h4>
+
+                <!-- GPS toggle -->
+                <div class="card border-0 shadow-sm mb-3">
+                    <div class="card-body d-flex justify-content-between align-items-center">
+                        <div>
+                            <div class="fw-semibold">GPS Tracking</div>
+                            <div class="text-muted small" id="gpsStatus">Inactive</div>
+                        </div>
+                        <div class="form-check form-switch mb-0">
+                            <input class="form-check-input" type="checkbox" id="gpsToggle" onchange="toggleGps(this.checked)" style="width:2.5rem;height:1.25rem"/>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Active orders -->
+                <div id="activeOrdersContainer">
+                    <div class="text-center py-4 text-muted" id="loadingOrders">
+                        <div class="spinner-border spinner-border-sm me-2"></div>Loading orders…
+                    </div>
+                </div>
+
+                <!-- Route optimization -->
+                <button class="btn btn-outline-primary w-100 mt-2" onclick="optimizeRoute()">
+                    <i class="bi bi-signpost-split me-2"></i>Optimize My Route (AI)
+                </button>
+                <div id="routeResult" class="mt-3"></div>
+            </div>
+
+            <!-- Right: Map -->
+            <div class="col-lg-7">
+                <div class="card border-0 shadow-sm">
+                    <div class="card-body p-2">
+                        <div id="map"></div>
+                        <div class="text-center text-muted small mt-2" id="mapFallback">
+                            <i class="bi bi-map me-1"></i>Live map requires Google Maps API key
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</main>
+
+<footer th:replace="~{layout/base :: footer}"></footer>
+<div th:replace="~{layout/base :: scripts}"></div>
+<script th:inline="javascript">
+    const MAPS_KEY = /*[[${mapsApiKey}]]*/ '';
+
+    if (!isLoggedIn()) window.location.href = '/login';
+    const user = getUser();
+
+    let map, myMarker, stompClient, watchId;
+    let activeOrders = [];
+
+    // ── Load orders ───────────────────────────────────────────────────
+    async function loadActiveOrders() {
+        const res = await apiFetch('/api/delivery/my-orders');
+        if (!res) return;
+        activeOrders = await res.json();
+        renderOrders();
+        document.getElementById('loadingOrders').classList.add('d-none');
+    }
+
+    function renderOrders() {
+        const container = document.getElementById('activeOrdersContainer');
+        if (!activeOrders.length) {
+            container.innerHTML = '<p class="text-muted text-center py-3">No active deliveries.</p>';
+            return;
+        }
+        container.innerHTML = activeOrders.map(o => `
+            <div class="card border-0 shadow-sm mb-3 order-card-active">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <div class="fw-bold small">Order #${o.id}</div>
+                            <div class="text-muted small">${o.restaurantName || ''}</div>
+                            <div class="text-muted small"><i class="bi bi-geo-alt me-1"></i>${o.deliveryAddress || ''}</div>
+                        </div>
+                        <span class="badge bg-warning text-dark align-self-start">${o.status}</span>
+                    </div>
+                    <div class="mt-2 d-flex gap-2">
+                        ${getNextTransition(o.status)
+                            ? `<button class="btn btn-primary btn-sm" onclick="updateStatus(${o.id}, '${getNextTransition(o.status)}')">
+                                Mark as ${getNextTransition(o.status).replace(/_/g,' ')}
+                               </button>`
+                            : `<span class="badge bg-success">Delivered</span>`}
+                        <a href="/orders/${o.id}/track" class="btn btn-outline-secondary btn-sm">
+                            <i class="bi bi-map me-1"></i>View
+                        </a>
+                    </div>
+                </div>
+            </div>`).join('');
+    }
+
+    function getNextTransition(status) {
+        const map = { CONFIRMED: 'PREPARING', PREPARING: 'OUT_FOR_DELIVERY', OUT_FOR_DELIVERY: 'DELIVERED' };
+        return map[status] || null;
+    }
+
+    async function updateStatus(orderId, newStatus) {
+        const res = await apiFetch(`/api/tracking/${orderId}/update`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: newStatus, message: `Status updated to ${newStatus}` })
+        });
+        if (res?.ok) loadActiveOrders();
+    }
+
+    // ── GPS ───────────────────────────────────────────────────────────
+    function toggleGps(enabled) {
+        if (enabled && navigator.geolocation) {
+            document.getElementById('gpsStatus').textContent = 'Tracking…';
+            watchId = navigator.geolocation.watchPosition(pos => {
+                const { latitude: lat, longitude: lng } = pos.coords;
+                sendLocation(lat, lng);
+                if (map && myMarker) myMarker.setPosition({ lat, lng });
+            }, null, { enableHighAccuracy: true });
+        } else {
+            if (watchId) navigator.geolocation.clearWatch(watchId);
+            document.getElementById('gpsStatus').textContent = 'Inactive';
+        }
+    }
+
+    function sendLocation(lat, lng) {
+        activeOrders.forEach(o => {
+            if (['PREPARING','OUT_FOR_DELIVERY'].includes(o.status) && stompClient?.connected) {
+                stompClient.publish({
+                    destination: `/app/order/${o.id}/location`,
+                    body: JSON.stringify({ orderId: o.id, latitude: lat, longitude: lng, deliveryBoyId: user?.id })
+                });
+            }
+        });
+    }
+
+    // ── WebSocket ─────────────────────────────────────────────────────
+    function connectWS() {
+        const socket = new SockJS('/ws');
+        stompClient = new StompJs.Client({ webSocketFactory: () => socket });
+        stompClient.onConnect = () => console.log('WS connected');
+        stompClient.activate();
+    }
+
+    // ── AI Route Optimization ─────────────────────────────────────────
+    async function optimizeRoute() {
+        const btn = event.currentTarget;
+        btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Optimizing…';
+        try {
+            const res = await apiFetch(`/api/ai/route-optimize?deliveryBoyId=${user?.id}`);
+            if (!res || !res.ok) { btn.textContent = 'Optimization failed'; return; }
+            const data = await res.json();
+            renderRouteResult(data);
+        } catch(e) {
+            document.getElementById('routeResult').innerHTML = '<p class="text-danger small">AI unavailable.</p>';
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-signpost-split me-2"></i>Optimize My Route (AI)';
+        }
+    }
+
+    function renderRouteResult(data) {
+        const el = document.getElementById('routeResult');
+        if (!data.optimizedSequence?.length) { el.innerHTML = '<p class="text-muted small">No route suggestions.</p>'; return; }
+        el.innerHTML = `
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between mb-2">
+                        <h6 class="fw-bold mb-0">AI Optimized Route</h6>
+                        <span class="badge bg-success">~${data.totalEstimatedMinutes} min</span>
+                    </div>
+                    ${data.optimizedSequence.map((s,i) => `
+                        <div class="d-flex gap-2 mb-1 small">
+                            <span class="badge bg-secondary">${i+1}</span>
+                            <span>Order #${s.orderId || s.order} — ${s.address} (~${s.estimatedMinutes} min)</span>
+                        </div>`).join('')}
+                </div>
+            </div>`;
+    }
+
+    // ── Google Maps ───────────────────────────────────────────────────
+    function initMap() {
+        document.getElementById('mapFallback').classList.add('d-none');
+        map = new google.maps.Map(document.getElementById('map'), {
+            center: { lat: 12.9716, lng: 77.5946 }, zoom: 13
+        });
+        myMarker = new google.maps.Marker({
+            map, title: 'You',
+            icon: { url: 'https://maps.google.com/mapfiles/ms/icons/blue-dot.png' }
+        });
+    }
+
+    // ── Init ──────────────────────────────────────────────────────────
+    loadActiveOrders();
+    connectWS();
+    setInterval(loadActiveOrders, 30000);
+</script>
+<script th:if="${mapsApiKey != null and !mapsApiKey.isEmpty()}"
+        th:src="'https://maps.googleapis.com/maps/api/js?key=' + ${mapsApiKey} + '&callback=initMap'" async defer></script>
+</body>
+</html>

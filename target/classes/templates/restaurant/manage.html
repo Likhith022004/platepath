@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head th:replace="~{layout/base :: head('Manage Restaurant')}"></head>
+<body class="d-flex flex-column min-vh-100">
+
+<nav th:replace="~{layout/base :: navbar}"></nav>
+
+<main class="flex-grow-1 py-4">
+    <div class="container">
+        <h3 class="fw-bold mb-4"><i class="bi bi-tools me-2" style="color:var(--pp-orange)"></i>My Restaurant</h3>
+        <div id="alertBox" class="alert d-none"></div>
+
+        <!-- Restaurant info card -->
+        <div class="card border-0 shadow-sm mb-4" id="restaurantCard">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="fw-bold mb-1" id="restName">Loading…</h5>
+                        <p class="text-muted small mb-0" id="restMeta"></p>
+                    </div>
+                    <div class="d-flex align-items-center gap-3">
+                        <div class="form-check form-switch mb-0">
+                            <input class="form-check-input" type="checkbox" id="openToggle" onchange="toggleOpenStatus(this.checked)"/>
+                            <label class="form-check-label small fw-semibold" for="openToggle">Open for Orders</label>
+                        </div>
+                        <span class="badge bg-success fs-6" id="ratingBadge"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tabs -->
+        <ul class="nav nav-tabs mb-4" id="manageTabs">
+            <li class="nav-item"><a class="nav-link active" href="#" onclick="showTab('menu')">Menu Items</a></li>
+            <li class="nav-item"><a class="nav-link" href="#" onclick="showTab('orders')">Incoming Orders</a></li>
+            <li class="nav-item"><a class="nav-link" href="#" onclick="showTab('insights')">AI Insights</a></li>
+        </ul>
+
+        <!-- Menu tab -->
+        <div id="tab-menu">
+            <div class="d-flex justify-content-between mb-3">
+                <h6 class="fw-bold mb-0">Menu Items</h6>
+                <button class="btn btn-primary btn-sm" onclick="openAddItemModal()">
+                    <i class="bi bi-plus-lg me-1"></i>Add Item
+                </button>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle small">
+                    <thead class="table-light">
+                    <tr><th>Name</th><th>Category</th><th>Price</th><th>Veg</th><th>Available</th><th>Actions</th></tr>
+                    </thead>
+                    <tbody id="menuTableBody">
+                    <tr><td colspan="6" class="text-center py-3"><div class="spinner-border spinner-border-sm"></div></td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Orders tab -->
+        <div id="tab-orders" class="d-none">
+            <h6 class="fw-bold mb-3">Incoming Orders</h6>
+            <div id="incomingOrders"></div>
+        </div>
+
+        <!-- Insights tab -->
+        <div id="tab-insights" class="d-none">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between mb-3">
+                        <h6 class="fw-bold mb-0"><i class="bi bi-robot me-2" style="color:var(--pp-orange)"></i>AI Business Insights</h6>
+                        <button class="btn btn-sm btn-outline-primary" onclick="loadInsights()">
+                            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                        </button>
+                    </div>
+                    <div id="insightsContent"><p class="text-muted">Click Refresh to load AI insights.</p></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</main>
+
+<!-- Add/Edit Item Modal -->
+<div class="modal fade" id="itemModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold" id="itemModalTitle">Add Menu Item</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="itemId"/>
+                <div class="mb-3"><label class="form-label">Name</label><input type="text" class="form-control" id="itemName" required/></div>
+                <div class="mb-3"><label class="form-label">Description</label><textarea class="form-control" id="itemDesc" rows="2"></textarea></div>
+                <div class="row g-2 mb-3">
+                    <div class="col"><label class="form-label">Price (₹)</label><input type="number" class="form-control" id="itemPrice" min="0" step="0.01"/></div>
+                    <div class="col"><label class="form-label">Category</label><input type="text" class="form-control" id="itemCategory" placeholder="Main Course"/></div>
+                </div>
+                <div class="form-check form-switch mb-2">
+                    <input class="form-check-input" type="checkbox" id="itemVeg"/>
+                    <label class="form-check-label">Vegetarian</label>
+                </div>
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="itemAvailable" checked/>
+                    <label class="form-check-label">Available</label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary btn-sm" onclick="saveItem()">Save</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<footer th:replace="~{layout/base :: footer}"></footer>
+<div th:replace="~{layout/base :: scripts}"></div>
+<script>
+    if (!isLoggedIn() || getUser()?.role !== 'RESTAURANT_OWNER') window.location.href = '/login';
+
+    let myRestaurant = null;
+    const itemModal = new bootstrap.Modal(document.getElementById('itemModal'));
+
+    // ── Load restaurant ───────────────────────────────────────────────
+    async function loadMyRestaurant() {
+        const res = await apiFetch('/api/restaurants/my');
+        if (!res || !res.ok) {
+            document.getElementById('restName').textContent = 'No restaurant found';
+            return;
+        }
+        myRestaurant = await res.json();
+        document.getElementById('restName').textContent = myRestaurant.name;
+        document.getElementById('restMeta').textContent = `${myRestaurant.cuisineType} • ${myRestaurant.address}`;
+        document.getElementById('ratingBadge').textContent = '⭐ ' + (myRestaurant.rating||4).toFixed(1);
+        document.getElementById('openToggle').checked = myRestaurant.open || myRestaurant.isOpen;
+        loadMenu();
+    }
+
+    async function loadMenu() {
+        if (!myRestaurant) return;
+        const res = await apiFetch(`/api/restaurants/${myRestaurant.id}/menu`);
+        const items = await res.json();
+        const tbody = document.getElementById('menuTableBody');
+        if (!items.length) { tbody.innerHTML = '<tr><td colspan="6" class="text-muted text-center">No items yet.</td></tr>'; return; }
+        tbody.innerHTML = items.map(i => `
+            <tr>
+                <td class="fw-semibold">${i.name}</td>
+                <td>${i.category}</td>
+                <td>₹${i.price}</td>
+                <td><span class="badge ${i.vegetarian||i.isVegetarian ? 'bg-success' : 'bg-secondary'}">${i.vegetarian||i.isVegetarian ? 'Veg' : 'Non-veg'}</span></td>
+                <td><span class="badge ${i.available||i.isAvailable ? 'bg-success' : 'bg-danger'}">${i.available||i.isAvailable ? 'Yes' : 'No'}</span></td>
+                <td>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="editItem(${JSON.stringify(i).replace(/"/g,'&quot;')})"><i class="bi bi-pencil"></i></button>
+                </td>
+            </tr>`).join('');
+    }
+
+    async function loadOrders() {
+        if (!myRestaurant) return;
+        const res = await apiFetch(`/api/orders?restaurantId=${myRestaurant.id}&page=0&size=20`);
+        if (!res) return;
+        const data = await res.json();
+        const orders = data.content || [];
+        const el = document.getElementById('incomingOrders');
+        if (!orders.length) { el.innerHTML = '<p class="text-muted text-center">No orders.</p>'; return; }
+        el.innerHTML = orders.map(o => `
+            <div class="card border-0 shadow-sm mb-2">
+                <div class="card-body d-flex justify-content-between align-items-center">
+                    <div>
+                        <div class="fw-semibold small">Order #${o.id} — ${o.customerName || 'Customer'}</div>
+                        <div class="text-muted small">${(o.items||[]).map(i=>`${i.menuItemName}×${i.quantity}`).join(', ')}</div>
+                        <div class="fw-bold small mt-1">₹${o.totalAmount}</div>
+                    </div>
+                    <span class="badge bg-warning text-dark">${o.status}</span>
+                </div>
+            </div>`).join('');
+    }
+
+    async function loadInsights() {
+        const el = document.getElementById('insightsContent');
+        el.innerHTML = '<div class="text-center py-3"><div class="spinner-border spinner-border-sm"></div></div>';
+        try {
+            const res = await apiFetch('/api/ai/analytics?period=WEEKLY');
+            if (!res || !res.ok) { el.innerHTML = '<p class="text-danger">AI unavailable.</p>'; return; }
+            const data = await res.json();
+            el.innerHTML = `
+                <p class="text-muted">${data.summary || ''}</p>
+                <ul class="list-unstyled">
+                    ${(data.keyInsights||[]).map(i=>`<li class="mb-2 small"><i class="bi bi-arrow-right-circle text-primary me-2"></i>${i}</li>`).join('')}
+                </ul>
+                ${data.recommendation ? `<div class="alert alert-warning small"><i class="bi bi-lightbulb me-2"></i>${data.recommendation}</div>` : ''}`;
+        } catch(e) {
+            el.innerHTML = '<p class="text-danger">Failed to load insights.</p>';
+        }
+    }
+
+    async function toggleOpenStatus(isOpen) {
+        if (!myRestaurant) return;
+        await apiFetch(`/api/restaurants/${myRestaurant.id}/toggle-status`, { method: 'POST' });
+    }
+
+    // ── Menu item CRUD ────────────────────────────────────────────────
+    function openAddItemModal() {
+        document.getElementById('itemModalTitle').textContent = 'Add Menu Item';
+        document.getElementById('itemId').value = '';
+        document.getElementById('itemName').value = '';
+        document.getElementById('itemDesc').value = '';
+        document.getElementById('itemPrice').value = '';
+        document.getElementById('itemCategory').value = '';
+        document.getElementById('itemVeg').checked = false;
+        document.getElementById('itemAvailable').checked = true;
+        itemModal.show();
+    }
+
+    function editItem(item) {
+        document.getElementById('itemModalTitle').textContent = 'Edit Menu Item';
+        document.getElementById('itemId').value = item.id;
+        document.getElementById('itemName').value = item.name;
+        document.getElementById('itemDesc').value = item.description || '';
+        document.getElementById('itemPrice').value = item.price;
+        document.getElementById('itemCategory').value = item.category;
+        document.getElementById('itemVeg').checked = item.vegetarian || item.isVegetarian;
+        document.getElementById('itemAvailable').checked = item.available !== false && item.isAvailable !== false;
+        itemModal.show();
+    }
+
+    async function saveItem() {
+        const id = document.getElementById('itemId').value;
+        const payload = {
+            name:        document.getElementById('itemName').value.trim(),
+            description: document.getElementById('itemDesc').value.trim(),
+            price:       parseFloat(document.getElementById('itemPrice').value),
+            category:    document.getElementById('itemCategory').value.trim(),
+            isVegetarian: document.getElementById('itemVeg').checked,
+            isAvailable:  document.getElementById('itemAvailable').checked,
+            restaurantId: myRestaurant?.id
+        };
+        const url    = id ? `/api/restaurants/${myRestaurant.id}/menu/${id}` : `/api/restaurants/${myRestaurant.id}/menu`;
+        const method = id ? 'PUT' : 'POST';
+        const res = await apiFetch(url, { method, headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+        if (res?.ok) { itemModal.hide(); loadMenu(); }
+    }
+
+    // ── Tab switching ─────────────────────────────────────────────────
+    function showTab(name) {
+        ['menu','orders','insights'].forEach(t => {
+            document.getElementById(`tab-${t}`).classList.toggle('d-none', t !== name);
+        });
+        document.querySelectorAll('#manageTabs .nav-link').forEach((el, i) => {
+            el.classList.toggle('active', ['menu','orders','insights'][i] === name);
+        });
+        if (name === 'orders') loadOrders();
+    }
+
+    loadMyRestaurant();
+</script>
+</body>
+</html>

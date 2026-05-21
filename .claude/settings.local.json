@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(New-Item -ItemType Directory -Force \"c:\\\\Users\\\\likhith s\\\\Desktop\\\\mini_project\\\\src\\\\main\\\\resources\\\\templates\\\\layout\")",
+      "PowerShell(New-Item -ItemType Directory -Force \"c:\\\\Users\\\\likhith s\\\\Desktop\\\\mini_project\\\\src\\\\main\\\\resources\\\\templates\\\\auth\")",
+      "PowerShell(New-Item -ItemType Directory -Force \"c:\\\\Users\\\\likhith s\\\\Desktop\\\\mini_project\\\\src\\\\main\\\\resources\\\\templates\\\\restaurant\")",
+      "PowerShell(New-Item -ItemType Directory -Force \"c:\\\\Users\\\\likhith s\\\\Desktop\\\\mini_project\\\\src\\\\main\\\\resources\\\\templates\\\\order\")",
+      "PowerShell(New-Item -ItemType Directory -Force \"c:\\\\Users\\\\likhith s\\\\Desktop\\\\mini_project\\\\src\\\\main\\\\resources\\\\templates\\\\delivery\")",
+      "PowerShell(New-Item -ItemType Directory -Force \"c:\\\\Users\\\\likhith s\\\\Desktop\\\\mini_project\\\\src\\\\main\\\\resources\\\\templates\\\\admin\")",
+      "Bash(\"/c/Users/likhith s/maven/apache-maven-3.9.6/bin/mvn\" spring-boot:run)"
+    ]
+  }
+}
